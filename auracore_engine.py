@@ -63,7 +63,7 @@ CORROSION_CALIB_SIGMA = 2.0    # Otomatik kalibrasyon: ortalama + N*sigma
 class AuraCoreEngine:
     """Ana analiz motoru. Seri porttan veri alır, işler, hasar skoru üretir."""
 
-    def __init__(self, port='COM5', baud=115200, csv_file='auracore_veriler.csv'):
+    def __init__(self, port='COM5', baud=115200, csv_file='data/auracore_veriler.csv'):
         self.port = port
         self.baud = baud
         self.csv_file = csv_file

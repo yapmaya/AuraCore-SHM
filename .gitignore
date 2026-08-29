@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# AuraCore-özel
+*.legacy_*
+logs/
+data/*.csv
+!data/README.md

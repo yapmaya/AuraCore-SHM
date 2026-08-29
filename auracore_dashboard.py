@@ -120,7 +120,7 @@ class AuraCoreDashboard(ctk.CTk):
         # Motor
         self.engine = AuraCoreEngine(
             port=port or autodetect_port(),
-            csv_file='auracore_veriler.csv',
+            csv_file='data/auracore_veriler.csv',
         )
         self.engine.on_fast_data = self._on_fast
         self.engine.on_slow_data = self._on_slow
@@ -132,7 +132,7 @@ class AuraCoreDashboard(ctk.CTk):
 
         # Başlat
         if simulate:
-            path = csv_path or 'auracore_veriler.csv'
+            path = csv_path or 'data/auracore_veriler.csv'
             self.engine.start_simulation(csv_path=path, speed=1.0)
             self._set_status("SİMÜLASYON", True)
         else:
