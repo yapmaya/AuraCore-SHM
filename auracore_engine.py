@@ -252,7 +252,7 @@ class AuraCoreEngine:
         self._corrosion_rates_history.append(abs(self.corrosion_rate))
 
         if self.corrosion_threshold is None:
-            if len(self._corrosion_rates_history) >= 20:
+            if len(self._corrosion_rates_history) >= 50:
                 arr = np.array(self._corrosion_rates_history)
                 self.corrosion_threshold = float(
                     np.mean(arr) + CORROSION_CALIB_SIGMA * np.std(arr)
