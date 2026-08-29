@@ -9,6 +9,11 @@ Kapsam:
     (Nyquist frekansı = sample_rate / 2).
   - Enerji kayma-ortalaması anomalisi ilk 10 hesaplamadan önce devreye
     girmez, ani bir enerji sıçramasında devreye girer.
+  - Enerji eşiği yeniden kalibrasyonu: _energy_history maxlen=100'lük bir
+    KAYMA penceresidir — kalıcı bir rejim değişimi birkaç tekrardan sonra
+    'normal' olarak özümsenir, pencere tamamen dolunca eski taban tamamen
+    unutulur, ve std≈0 iken bant çok dar olduğundan küçük sapmalar bile
+    yakalanır.
 """
 import numpy as np
 import pytest
@@ -109,6 +114,82 @@ def test_ani_enerji_sicramasi_anomaliyi_tetikler(engine):
     assert engine.fft_anomaly == False  # noqa: E712 (np.bool_ değeri)
 
     _piezo_sinus_doldur(engine, frekans=5.0, genlik=1_000_000.0)
+    engine.compute_fft()
+
+    assert engine.fft_anomaly == True  # noqa: E712 (np.bool_ değeri)
+
+
+# ─────────────────────────────────────────────────────
+#  ENERJİ EŞİĞİ YENİDEN KALİBRASYONU (KAYMA PENCERESİ)
+# ─────────────────────────────────────────────────────
+def test_kalici_seviye_degisimi_birkac_tekrardan_sonra_normal_sayilir(engine):
+    """_energy_history sabit bir eşik değil, kayma bir penceredir: enerji
+    sıçraması tek seferlik değil sürekli tekrar ederse (kalıcı bir rejim
+    değişimi), kayma ortalaması/std yeni seviyeyi birkaç tekrardan sonra
+    'normal' olarak özümser ve fft_anomaly False'a döner — sıçrama devam
+    ediyor olsa bile."""
+    for _ in range(15):
+        _piezo_sinus_doldur(engine, frekans=5.0, genlik=100.0)
+        engine.compute_fft()
+    assert engine.fft_anomaly == False  # noqa: E712 (np.bool_ değeri)
+
+    _piezo_sinus_doldur(engine, frekans=5.0, genlik=500.0)
+    engine.compute_fft()
+    assert engine.fft_anomaly == True  # noqa: E712 (ilk sıçrama yakalanır)
+
+    for _ in range(6):
+        _piezo_sinus_doldur(engine, frekans=5.0, genlik=500.0)
+        engine.compute_fft()
+
+    # Aynı seviye sürekli tekrar ettiğinden pencere buna alışır.
+    assert engine.fft_anomaly == False  # noqa: E712 (np.bool_ değeri)
+
+
+def test_pencere_100_kayitla_sinirli_eski_taban_tamamen_unutulur(engine):
+    """_energy_history deque'i maxlen=100'dür. Pencere tamamen yeni bir
+    enerji seviyesiyle dolduğunda eski taban tamamen tahliye edilir ve
+    anomali sınırı sadece yeni seviyeye göre yeniden kalibre olur — eski
+    tabana göre çok yüksek sayılacak bir ara-değer bile artık anomali
+    sayılmaz."""
+    dusuk_genlik, yuksek_genlik, ara_genlik = 100.0, 500.0, 300.0
+
+    for _ in range(100):
+        _piezo_sinus_doldur(engine, frekans=5.0, genlik=dusuk_genlik)
+        engine.compute_fft()
+    dusuk_enerji = engine.spectral_energy
+    assert len(engine._energy_history) == 100
+
+    for _ in range(100):
+        _piezo_sinus_doldur(engine, frekans=5.0, genlik=yuksek_genlik)
+        engine.compute_fft()
+    yuksek_enerji = engine.spectral_energy
+
+    # Pencere (maxlen=100) artık tamamen yeni seviyeyle dolu; eski düşük
+    # taban tamamen tahliye edilmiş olmalı.
+    assert len(engine._energy_history) == 100
+    assert min(engine._energy_history) == pytest.approx(yuksek_enerji)
+    assert max(engine._energy_history) == pytest.approx(yuksek_enerji)
+
+    # Eski tabana göre çok yüksek sayılacak ara-seviye bir değer, yeni
+    # (yüksek) tabana göre ARTIK anomali sayılmıyor.
+    _piezo_sinus_doldur(engine, frekans=5.0, genlik=ara_genlik)
+    engine.compute_fft()
+    ara_enerji = engine.spectral_energy
+
+    assert dusuk_enerji < ara_enerji < yuksek_enerji
+    assert engine.fft_anomaly == False  # noqa: E712 (np.bool_ değeri)
+
+
+def test_sabit_tabanda_std_sifira_yakinken_kucuk_sapma_bile_yakalanir(engine):
+    """Enerji geçmişi uzun süre neredeyse sabit kaldığında (std≈0), eşik
+    bandı çok dar olur; bu durumda genlikte yalnızca %1'lik bir artış bile
+    anomali olarak işaretlenmeli."""
+    for _ in range(50):
+        _piezo_sinus_doldur(engine, frekans=5.0, genlik=100.0)
+        engine.compute_fft()
+    assert engine.fft_anomaly == False  # noqa: E712 (np.bool_ değeri)
+
+    _piezo_sinus_doldur(engine, frekans=5.0, genlik=101.0)
     engine.compute_fft()
 
     assert engine.fft_anomaly == True  # noqa: E712 (np.bool_ değeri)
