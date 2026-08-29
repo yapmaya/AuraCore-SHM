@@ -1,6 +1,10 @@
 """
 AuraCore Dashboard — Premium CustomTkinter Arayüz v1.0
-Kullanım: python auracore_dashboard.py [--simulate] [--csv kolon_verileri.csv]
+Kullanım: python auracore_dashboard.py [--simulate] [--csv girdi.csv] [--out cikti.csv]
+
+--csv, simülasyon modunda oynatılacak GİRDİ dosyasıdır (asla değiştirilmez).
+--out, motorun yeni ölçümleri kaydettiği ÇIKTI dosyasıdır (varsayılan:
+logs/auracore_kayit_<YYYYMMDD_HHMMSS>.csv). Girdi ve çıktı her zaman ayrıdır.
 """
 import sys
 import os
@@ -93,7 +97,7 @@ def autodetect_port():
 
 
 class AuraCoreDashboard(ctk.CTk):
-    def __init__(self, simulate=False, csv_path=None, port=None):
+    def __init__(self, simulate=False, csv_path=None, port=None, out_path=None):
         super().__init__()
 
         # Pencere ayarları
@@ -120,7 +124,7 @@ class AuraCoreDashboard(ctk.CTk):
         # Motor
         self.engine = AuraCoreEngine(
             port=port or autodetect_port(),
-            csv_file='data/auracore_veriler.csv',
+            output_csv=out_path,
         )
         self.engine.on_fast_data = self._on_fast
         self.engine.on_slow_data = self._on_slow
@@ -554,7 +558,14 @@ def main():
         if idx + 1 < len(sys.argv):
             port = sys.argv[idx + 1]
 
-    app = AuraCoreDashboard(simulate=simulate, csv_path=csv_path, port=port)
+    out_path = None
+    if '--out' in sys.argv:
+        idx = sys.argv.index('--out')
+        if idx + 1 < len(sys.argv):
+            out_path = sys.argv[idx + 1]
+
+    app = AuraCoreDashboard(simulate=simulate, csv_path=csv_path, port=port,
+                            out_path=out_path)
     app.protocol("WM_DELETE_WINDOW", app.on_closing)
     app.mainloop()
 

@@ -25,8 +25,13 @@ import time
 import os
 
 # ═══════════════════════════════════════════════════════════
-#  NORMALİZASYON ARALIKLARINI CSV VERİSİNDEN KALİBRE EDİLDİ
+#  VARSAYILAN KALİBRASYON DEĞERLERİ
+#  Bunlar yalnızca config/auracore_config.json bulunamadığında
+#  kullanılan yedek (fallback) değerlerdir — asıl kalibrasyon artık
+#  config dosyasından okunur (bkz. _load_config, tools/kalibrasyon_analizi.py).
 # ═══════════════════════════════════════════════════════════
+CONFIG_PATH = "config/auracore_config.json"
+
 SENSOR_RANGES = {
     'strain':   {'min': 80000, 'max': 110000},
     'nem':      {'min': 13000, 'max': 15000},
@@ -59,24 +64,82 @@ FFT_SAMPLE_RATE = 20.0  # Hz (hızlı hat frekansı)
 CORROSION_WINDOW = 30          # Son N okuma
 CORROSION_CALIB_SIGMA = 2.0    # Otomatik kalibrasyon: ortalama + N*sigma
 
+# Seri port varsayılanları
+DEFAULT_PORT = 'COM5'
+DEFAULT_BAUD = 115200
+
+
+def _load_config(config_path=CONFIG_PATH):
+    """config/auracore_config.json dosyasını yükler.
+
+    Dosya yoksa veya okunamıyorsa UYARI loglar ve boş sözlük döner;
+    çağıran taraf bu durumda modül seviyesindeki varsayılan sabitlere
+    (SENSOR_RANGES, WEIGHTS, CLASSES, ...) düşer."""
+    if not os.path.exists(config_path):
+        print(
+            f"UYARI: Config dosyası bulunamadı ({config_path}), "
+            "varsayılan kalibrasyon değerleri kullanılıyor."
+        )
+        return {}
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(
+            f"UYARI: Config dosyası okunamadı ({config_path}): {e}. "
+            "Varsayılan kalibrasyon değerleri kullanılıyor."
+        )
+        return {}
+
 
 class AuraCoreEngine:
     """Ana analiz motoru. Seri porttan veri alır, işler, hasar skoru üretir."""
 
-    def __init__(self, port='COM5', baud=115200, csv_file='data/auracore_veriler.csv'):
-        self.port = port
-        self.baud = baud
-        self.csv_file = csv_file
+    def __init__(self, port=None, baud=None, output_csv=None, config_path=CONFIG_PATH):
+        # ── Config Yükleme ────────────────────────────────
+        # config/auracore_config.json bulunamazsa _load_config UYARI loglar
+        # ve modül seviyesindeki varsayılan sabitlere düşülür.
+        config = _load_config(config_path)
+
+        self.sensor_ranges = config.get('sensor_ranges', SENSOR_RANGES)
+        self.weights = config.get('weights', WEIGHTS)
+        classes_cfg = config.get('classes')
+        if classes_cfg:
+            self.classes = [
+                (c['threshold'], c['label'], c['color']) for c in classes_cfg
+            ]
+        else:
+            self.classes = CLASSES
+
+        fft_cfg = config.get('fft', {})
+        self.fft_window_size = fft_cfg.get('window_size', FFT_WINDOW_SIZE)
+        self.fft_sample_rate = fft_cfg.get('sample_rate', FFT_SAMPLE_RATE)
+
+        corrosion_cfg = config.get('corrosion', {})
+        self.corrosion_window = corrosion_cfg.get('window', CORROSION_WINDOW)
+        self.corrosion_calib_sigma = corrosion_cfg.get(
+            'calib_sigma', CORROSION_CALIB_SIGMA
+        )
+
+        serial_cfg = config.get('serial', {})
+        self.port = port or serial_cfg.get('port', DEFAULT_PORT)
+        self.baud = baud or serial_cfg.get('baud', DEFAULT_BAUD)
+
+        if output_csv is None:
+            output_csv = "logs/auracore_kayit_{}.csv".format(
+                datetime.now().strftime('%Y%m%d_%H%M%S')
+            )
+        self.output_csv = output_csv
         self.ser = None
         self.running = False
 
         # ── Veri Tamponları ──────────────────────────────
-        self.piezo_buffer = deque(maxlen=FFT_WINDOW_SIZE)
-        self.accel_x_buffer = deque(maxlen=FFT_WINDOW_SIZE)
-        self.accel_y_buffer = deque(maxlen=FFT_WINDOW_SIZE)
-        self.accel_z_buffer = deque(maxlen=FFT_WINDOW_SIZE)
-        self.corrosion_buffer = deque(maxlen=CORROSION_WINDOW)
-        self.corrosion_time_buffer = deque(maxlen=CORROSION_WINDOW)
+        self.piezo_buffer = deque(maxlen=self.fft_window_size)
+        self.accel_x_buffer = deque(maxlen=self.fft_window_size)
+        self.accel_y_buffer = deque(maxlen=self.fft_window_size)
+        self.accel_z_buffer = deque(maxlen=self.fft_window_size)
+        self.corrosion_buffer = deque(maxlen=self.corrosion_window)
+        self.corrosion_time_buffer = deque(maxlen=self.corrosion_window)
 
         # ── Son Okunan Değerler ──────────────────────────
         self.latest = {
@@ -123,24 +186,22 @@ class AuraCoreEngine:
     ]
 
     def _init_csv(self):
-        """CSV dosyasını başlıklarla oluştur. Eski şemalı (tekli 'Nem'
-        sütunlu) bir dosya varsa yedekleyip yenisini oluşturur."""
-        if os.path.exists(self.csv_file):
-            with open(self.csv_file, 'r', encoding='utf-8') as f:
-                first_line = f.readline().strip()
-            if first_line == ','.join(self.CSV_HEADER):
-                return
-            backup = f"{self.csv_file}.legacy_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            os.rename(self.csv_file, backup)
-
-        with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
+        """Çıktı CSV dosyasını başlıklarla oluşturur (yalnızca yoksa).
+        Var olan hiçbir dosyayı yeniden adlandırmaz veya üzerine yazmaz —
+        veri kaybı riski taşıyan eski davranış kaldırıldı."""
+        out_dir = os.path.dirname(self.output_csv)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        if os.path.exists(self.output_csv):
+            return
+        with open(self.output_csv, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(self.CSV_HEADER)
 
     def _write_csv(self, data, dtype):
         """Tek satır CSV kaydı yaz."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        with open(self.csv_file, 'a', newline='', encoding='utf-8') as f:
+        with open(self.output_csv, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             if dtype == "fast":
                 writer.writerow([
@@ -176,7 +237,7 @@ class AuraCoreEngine:
     # ─────────────────────────────────────────────────────
     def compute_fft(self):
         """Piezo tamponu üzerinde pencereli FFT analizi."""
-        if len(self.piezo_buffer) < FFT_WINDOW_SIZE:
+        if len(self.piezo_buffer) < self.fft_window_size:
             return
 
         signal = np.array(self.piezo_buffer, dtype=np.float64)
@@ -189,7 +250,7 @@ class AuraCoreEngine:
         # FFT hesapla
         N = len(windowed)
         yf = rfft(windowed)
-        xf = rfftfreq(N, 1.0 / FFT_SAMPLE_RATE)
+        xf = rfftfreq(N, 1.0 / self.fft_sample_rate)
         magnitudes = 2.0 / N * np.abs(yf)
 
         self.fft_freqs = xf
@@ -255,14 +316,14 @@ class AuraCoreEngine:
             if len(self._corrosion_rates_history) >= 50:
                 arr = np.array(self._corrosion_rates_history)
                 self.corrosion_threshold = float(
-                    np.mean(arr) + CORROSION_CALIB_SIGMA * np.std(arr)
+                    np.mean(arr) + self.corrosion_calib_sigma * np.std(arr)
                 )
         else:
             # Eşik güncellemesi (ağır kayma ortalaması)
             if len(self._corrosion_rates_history) >= 50:
                 arr = np.array(list(self._corrosion_rates_history)[-100:])
                 new_thresh = float(
-                    np.mean(arr) + CORROSION_CALIB_SIGMA * np.std(arr)
+                    np.mean(arr) + self.corrosion_calib_sigma * np.std(arr)
                 )
                 # Yumuşak geçiş
                 self.corrosion_threshold = (
@@ -284,7 +345,7 @@ class AuraCoreEngine:
     # ─────────────────────────────────────────────────────
     def compute_damage_score(self):
         """Ağırlıklı normalize skor hesapla ve sınıflandır."""
-        R = SENSOR_RANGES
+        R = self.sensor_ranges
         e = self.normalize(
             abs(self.latest['strain']),
             R['strain']['min'], R['strain']['max']
@@ -306,7 +367,7 @@ class AuraCoreEngine:
             R['piezo']['min'], R['piezo']['max']
         )
 
-        W = WEIGHTS
+        W = self.weights
         self.damage_score = (
             e * W['strain'] +
             m * W['nem'] +
@@ -317,7 +378,7 @@ class AuraCoreEngine:
         self.damage_score = max(0.0, min(1.0, self.damage_score))
 
         # Sınıflandırma
-        for threshold, label, color in CLASSES:
+        for threshold, label, color in self.classes:
             if self.damage_score <= threshold:
                 self.damage_class = label
                 self.damage_color = color
@@ -465,7 +526,16 @@ class AuraCoreEngine:
         return True
 
     def _simulate_from_csv(self, csv_path, speed):
-        """Mevcut CSV dosyasından veri oynatarak simülasyon."""
+        """Mevcut CSV dosyasından veri oynatarak simülasyon.
+
+        Geriye dönük uyumluluk: "Nem1"/"Nem2" sütunları varsa onları,
+        yoksa eski tekli "Nem" sütununu (nem1=nem2=Nem) kullanır.
+        Ardışık satırlar arasındaki gerçek zaman farkı ("Zaman" sütunu)
+        speed katsayısına bölünerek uygulanır; parse edilemezse hızlı
+        satırlar için 0.05s, yavaş satırlar için 1.0s varsayılana düşülür.
+        5 saniyeden büyük boşluklar (oturum kopması) 0.5 saniyeye sıkıştırılır.
+        """
+        prev_dt = None
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -473,6 +543,35 @@ class AuraCoreEngine:
                     break
 
                 tip = row.get('Tip', '')
+                if tip not in ('Hizli', 'Yavas'):
+                    continue
+
+                default_sleep = 0.05 if tip == 'Hizli' else 1.0
+
+                cur_dt = None
+                zaman_str = row.get('Zaman', '')
+                if zaman_str:
+                    try:
+                        cur_dt = datetime.strptime(
+                            zaman_str, "%Y-%m-%d %H:%M:%S.%f"
+                        )
+                    except ValueError:
+                        cur_dt = None
+
+                if prev_dt is not None and cur_dt is not None:
+                    delta = (cur_dt - prev_dt).total_seconds()
+                    if delta < 0:
+                        delta = default_sleep
+                    elif delta > 5.0:
+                        delta = 0.5
+                else:
+                    delta = default_sleep
+
+                if cur_dt is not None:
+                    prev_dt = cur_dt
+
+                time.sleep(delta / speed)
+
                 if tip == 'Hizli':
                     data = {
                         'type': 'fast',
@@ -482,17 +581,21 @@ class AuraCoreEngine:
                         'az': float(row.get('Az', 0) or 0),
                     }
                     self.process_fast(data)
-                    time.sleep(0.05 / speed)
-                elif tip == 'Yavas':
+                else:
+                    if 'Nem1' in row or 'Nem2' in row:
+                        nem1 = int(row.get('Nem1', 0) or 0)
+                        nem2 = int(row.get('Nem2', 0) or 0)
+                    else:
+                        nem_val = int(row.get('Nem', 0) or 0)
+                        nem1 = nem2 = nem_val
                     data = {
                         'type': 'slow',
                         'strain': int(row.get('Strain', 0) or 0),
-                        'nem1': int(row.get('Nem1', 0) or 0),
-                        'nem2': int(row.get('Nem2', 0) or 0),
+                        'nem1': nem1,
+                        'nem2': nem2,
                         'korozyon': int(row.get('Korozyon', 0) or 0),
                     }
                     self.process_slow(data)
-                    time.sleep(0.05 / speed)
 
     def _simulate_random(self, speed):
         """Rastgele veri üreterek simülasyon."""
