@@ -83,12 +83,19 @@ Bu alanda yapılan her değişiklik bu ilkeye göre değerlendirilmelidir.
 
 ## Test ve Çalıştırma Komutları
 
-> Henüz proje için bir test paketi (pytest vb.) veya lint yapılandırması yok. Bu bölüm
-> bunlar eklendikçe doldurulacak.
+> Lint yapılandırması henüz yok. `tests/` altında `auracore_engine.py` için pytest
+> testleri var (şimdilik yalnızca `compute_damage_score()`); bu bölüm kapsam
+> genişledikçe güncellenecek.
 
 ```bash
 # Bağımlılıkları kur
 pip install -r requirements.txt
+
+# Geliştirme/test bağımlılıkları (pytest dahil)
+pip install -r requirements-dev.txt
+
+# Testleri çalıştır
+pytest
 
 # Dashboard'u gerçek donanımla çalıştır (seri port otomatik algılanır: Linux'ta
 # /dev/ttyUSB*/ttyACM*, Windows'ta COM5 varsayılan)
