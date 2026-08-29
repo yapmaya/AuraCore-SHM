@@ -44,6 +44,50 @@ def test_pencere_dolmadan_hesaplama_yapilmaz(engine):
     assert yakalanan == []
 
 
+def test_on_fft_update_pencere_dolana_kadar_hic_tetiklenmez(engine):
+    """Boş tampondan başlayarak pencere dolana kadar tek tek örnek
+    eklenip her adımda compute_fft() çağrılsa bile on_fft_update hiçbir
+    ara adımda tetiklenmemeli; yalnızca pencere tam dolduğu anda (son
+    örnek eklendiğinde) ilk kez tetiklenmeli."""
+    yakalanan = []
+    engine.on_fft_update = lambda freqs, mags, dom: yakalanan.append(dom)
+
+    for _ in range(engine.fft_window_size - 1):
+        engine.piezo_buffer.append(0.0)
+        engine.compute_fft()
+
+    assert yakalanan == []
+    assert engine.fft_freqs.size == 0
+
+    # Son örnek eklenip pencere tam dolduğunda callback ilk kez tetiklenir.
+    engine.piezo_buffer.append(0.0)
+    engine.compute_fft()
+
+    assert len(yakalanan) == 1
+
+
+def test_on_fft_update_tampon_yeniden_eksilince_tekrar_tetiklenmez(engine):
+    """Pencere bir kez dolup callback tetiklendikten sonra tampon
+    (örn. eski örneklerin atılmasıyla) yeniden pencere boyutunun altına
+    düşerse, compute_fft() tekrar erken döner; on_fft_update pencere
+    yeniden dolana kadar tetiklenmemeli. Bu, kontrolün 'daha önce bir kez
+    hesaplandı mı' bayrağına değil, tamponun GÜNCEL uzunluğuna
+    dayandığını doğrular."""
+    _piezo_sinus_doldur(engine, frekans=5.0)  # tam pencereyle başlat
+    engine.compute_fft()
+
+    yakalanan = []
+    engine.on_fft_update = lambda freqs, mags, dom: yakalanan.append(dom)
+
+    for _ in range(10):
+        engine.piezo_buffer.popleft()
+    assert len(engine.piezo_buffer) == engine.fft_window_size - 10
+
+    engine.compute_fft()
+
+    assert yakalanan == []
+
+
 def test_bilinen_sinus_sinyalinde_baskin_frekans_dogru_tespit_edilir(engine):
     """5 Hz'lik saf bir sinüs sinyali için baskın frekans 5 Hz olarak
     tespit edilmeli (fft_sample_rate=20Hz, fft_window_size=128 ile
