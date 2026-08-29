@@ -41,13 +41,19 @@ SENSOR_RANGES = {
 }
 
 # Hasar skoru ağırlıkları
+# Nem (M) artık toplama doğrudan girmiyor — bkz. compute_damage_score() docstring'i.
+# Kalan 4 kanalın ağırlıkları, eski 0.80'lik toplamları 1.0'a gelecek şekilde
+# yeniden ölçeklendi (orijinal / 0.80): strain 0.25/0.80, accel 0.20/0.80,
+# korozyon 0.20/0.80, piezo 0.15/0.80.
 WEIGHTS = {
-    'strain':   0.25,   # ε
-    'nem':      0.20,   # M
-    'accel':    0.20,   # A
-    'korozyon': 0.20,   # C
-    'piezo':    0.15,   # P
+    'strain':   0.3125,  # ε
+    'accel':    0.25,    # A
+    'korozyon': 0.25,    # C
+    'piezo':    0.1875,  # P
 }
+
+# Nem'in korozyon katkısını büyüttüğü çarpan katsayısı (bkz. compute_damage_score).
+NEM_ETKI_KATSAYISI = 0.5
 
 # Sınıflandırma eşikleri
 CLASSES = [
@@ -103,6 +109,9 @@ class AuraCoreEngine:
 
         self.sensor_ranges = config.get('sensor_ranges', SENSOR_RANGES)
         self.weights = config.get('weights', WEIGHTS)
+        self.nem_etki_katsayisi = config.get(
+            'nem_etki_katsayisi', NEM_ETKI_KATSAYISI
+        )
         classes_cfg = config.get('classes')
         if classes_cfg:
             self.classes = [
@@ -344,7 +353,21 @@ class AuraCoreEngine:
     #  HASAR SKORU HESAPLAMA
     # ─────────────────────────────────────────────────────
     def compute_damage_score(self):
-        """Ağırlıklı normalize skor hesapla ve sınıflandır."""
+        """Ağırlıklı normalize skor hesapla ve sınıflandır.
+
+        Nem (M) doğrudan bir hasar bileşeni DEĞİLDİR — yağmurlu/nemli bir gün
+        tek başına yapıyı "hasarlı" göstermemelidir. Bunun yerine nem, korozyon
+        katkısını büyüten bir RİSK ÇARPANI olarak modellenir (yüksek nem,
+        korozyonun etkisini hızlandırır):
+
+            korozyon_katkisi = c_norm * (1 + NEM_ETKI_KATSAYISI * m_norm)
+            damage_score = e*W_e + a*W_a + korozyon_katkisi*W_c + p*W_p
+
+        korozyon_katkisi, çarpan nedeniyle 1.0'ı aşabileceğinden clamp edilir.
+        Nem sabit kalırken (m_norm sabit) skor lineer olarak sadece diğer
+        terimlerden etkilenir; nem yükseldikçe aynı korozyon seviyesi daha
+        yüksek katkı üretir.
+        """
         R = self.sensor_ranges
         e = self.normalize(
             abs(self.latest['strain']),
@@ -371,11 +394,13 @@ class AuraCoreEngine:
         )
 
         W = self.weights
+        korozyon_katkisi = min(
+            1.0, c * (1.0 + self.nem_etki_katsayisi * m)
+        )
         self.damage_score = (
             e * W['strain'] +
-            m * W['nem'] +
             a * W['accel'] +
-            c * W['korozyon'] +
+            korozyon_katkisi * W['korozyon'] +
             p * W['piezo']
         )
         self.damage_score = max(0.0, min(1.0, self.damage_score))

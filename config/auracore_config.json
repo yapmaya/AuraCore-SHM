@@ -8,12 +8,12 @@
     "accel":    { "min": 0.0,       "max": 82.59 }
   },
   "weights": {
-    "strain":   0.25,
-    "nem":      0.20,
-    "accel":    0.20,
-    "korozyon": 0.20,
-    "piezo":    0.15
+    "strain":   0.3125,
+    "accel":    0.25,
+    "korozyon": 0.25,
+    "piezo":    0.1875
   },
+  "nem_etki_katsayisi": 0.5,
   "classes": [
     { "threshold": 0.35, "label": "Sağlıklı",           "color": "#00E676" },
     { "threshold": 0.65, "label": "Yorulma Başlangıcı", "color": "#FF9100" },
