@@ -1,0 +1,34 @@
+{
+  "_aciklama": "AuraCore kalibrasyon ve çalışma zamanı ayarları. sensor_ranges, tools/kalibrasyon_analizi.py ile data/auracore_veriler.csv üzerinden [p1, p99] yöntemiyle hesaplanmıştır (bkz. config/sensor_ranges_onerilen.json). Bilinen sınırlama: korozyon (ve daha az ölçüde piezo) kanalının medyan okuması p99'a çok yakın olduğundan, p1-p99 yöntemiyle bile bu kanal hasar skoruna sabite yakın (~0.15) bir katkı ekler; nem kanalındaki gibi %0'a düşmez. Kök neden veri dağılımı (medyan aralığın tepesinde), yöntem hatası değil.",
+  "sensor_ranges": {
+    "strain":   { "min": 701.16,    "max": 265806.24 },
+    "nem":      { "min": 17663.0,   "max": 17664.69 },
+    "korozyon": { "min": 0.0,       "max": 17685.0 },
+    "piezo":    { "min": 50.0,      "max": 17076.0 },
+    "accel":    { "min": 0.0,       "max": 82.59 }
+  },
+  "weights": {
+    "strain":   0.25,
+    "nem":      0.20,
+    "accel":    0.20,
+    "korozyon": 0.20,
+    "piezo":    0.15
+  },
+  "classes": [
+    { "threshold": 0.35, "label": "Sağlıklı",           "color": "#00E676" },
+    { "threshold": 0.65, "label": "Yorulma Başlangıcı", "color": "#FF9100" },
+    { "threshold": 1.00, "label": "Kritik Hasar",       "color": "#FF1744" }
+  ],
+  "fft": {
+    "window_size": 128,
+    "sample_rate": 20.0
+  },
+  "corrosion": {
+    "window": 30,
+    "calib_sigma": 2.0
+  },
+  "serial": {
+    "port": "COM5",
+    "baud": 115200
+  }
+}
