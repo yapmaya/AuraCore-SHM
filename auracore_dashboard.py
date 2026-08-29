@@ -4,6 +4,7 @@ Kullanım: python auracore_dashboard.py [--simulate] [--csv kolon_verileri.csv]
 """
 import sys
 import os
+import glob
 import math
 import collections
 import customtkinter as ctk
@@ -82,8 +83,17 @@ class GaugeWidget:
         self._draw(score, color)
 
 
+def autodetect_port():
+    """Windows'ta 'COM5' varsayılanına düşer; Linux/macOS'ta bağlı ilk
+    USB-seri cihazı (/dev/ttyUSB*, /dev/ttyACM*) otomatik bulur."""
+    if os.name == 'nt':
+        return 'COM5'
+    candidates = sorted(glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*'))
+    return candidates[0] if candidates else 'COM5'
+
+
 class AuraCoreDashboard(ctk.CTk):
-    def __init__(self, simulate=False, csv_path=None):
+    def __init__(self, simulate=False, csv_path=None, port=None):
         super().__init__()
 
         # Pencere ayarları
@@ -108,7 +118,10 @@ class AuraCoreDashboard(ctk.CTk):
         self.last_fps_time = datetime.now()
 
         # Motor
-        self.engine = AuraCoreEngine(csv_file='auracore_veriler.csv')
+        self.engine = AuraCoreEngine(
+            port=port or autodetect_port(),
+            csv_file='auracore_veriler.csv',
+        )
         self.engine.on_fast_data = self._on_fast
         self.engine.on_slow_data = self._on_slow
         self.engine.on_corrosion_alert = self._on_corr_alert
@@ -119,7 +132,7 @@ class AuraCoreDashboard(ctk.CTk):
 
         # Başlat
         if simulate:
-            path = csv_path or 'kolon_verileri.csv'
+            path = csv_path or 'auracore_veriler.csv'
             self.engine.start_simulation(csv_path=path, speed=1.0)
             self._set_status("SİMÜLASYON", True)
         else:
@@ -199,7 +212,8 @@ class AuraCoreDashboard(ctk.CTk):
         self.indicators = {}
         items = [
             ("Gerinim (ε)", "strain", "0"),
-            ("Nem (M)", "nem", "0"),
+            ("Nem 1 (A0)", "nem1", "0"),
+            ("Nem 2 (A1)", "nem2", "0"),
             ("Korozyon (C)", "korozyon", "0"),
             ("Piezo (P)", "piezo", "0"),
             ("İvme RMS", "accel_rms", "0.00"),
@@ -406,7 +420,8 @@ class AuraCoreDashboard(ctk.CTk):
         lt = self.engine.latest
         mapping = {
             'strain': str(lt['strain']),
-            'nem': str(lt['nem']),
+            'nem1': str(lt['nem1']),
+            'nem2': str(lt['nem2']),
             'korozyon': str(lt['korozyon']),
             'piezo': str(lt['piezo']),
             'accel_rms': f"{lt['accel_rms']:.2f}",
@@ -533,7 +548,13 @@ def main():
         if idx + 1 < len(sys.argv):
             csv_path = sys.argv[idx + 1]
 
-    app = AuraCoreDashboard(simulate=simulate, csv_path=csv_path)
+    port = None
+    if '--port' in sys.argv:
+        idx = sys.argv.index('--port')
+        if idx + 1 < len(sys.argv):
+            port = sys.argv[idx + 1]
+
+    app = AuraCoreDashboard(simulate=simulate, csv_path=csv_path, port=port)
     app.protocol("WM_DELETE_WINDOW", app.on_closing)
     app.mainloop()
 

@@ -28,9 +28,9 @@ import os
 #  NORMALİZASYON ARALIKLARINI CSV VERİSİNDEN KALİBRE EDİLDİ
 # ═══════════════════════════════════════════════════════════
 SENSOR_RANGES = {
-    'strain':   {'min': -1000, 'max': 12000},
-    'nem':      {'min': 17660, 'max': 17700},
-    'korozyon': {'min': 17670, 'max': 17685},
+    'strain':   {'min': 80000, 'max': 110000},
+    'nem':      {'min': 13000, 'max': 15000},
+    'korozyon': {'min': 16900, 'max': 17300},
     'piezo':    {'min': 15600, 'max': 16800},
     'accel':    {'min': 0,     'max': 100},      # RMS m/s²
 }
@@ -80,7 +80,7 @@ class AuraCoreEngine:
 
         # ── Son Okunan Değerler ──────────────────────────
         self.latest = {
-            'strain': 0, 'nem': 0, 'korozyon': 0,
+            'strain': 0, 'nem1': 0, 'nem2': 0, 'nem': 0, 'korozyon': 0,
             'piezo': 0, 'ax': 0, 'ay': 0, 'az': 0,
             'accel_rms': 0, 'timestamp': '',
         }
@@ -116,16 +116,26 @@ class AuraCoreEngine:
     # ─────────────────────────────────────────────────────
     #  CSV KAYIT
     # ─────────────────────────────────────────────────────
+    CSV_HEADER = [
+        "Zaman", "Tip", "Strain", "Piezo", "Nem1", "Nem2",
+        "Korozyon", "Ax", "Ay", "Az",
+        "HasarSkoru", "Sinif", "KorozyonHizi", "KorozyonUyari"
+    ]
+
     def _init_csv(self):
-        """CSV dosyasını başlıklarla oluştur (yoksa)."""
-        if not os.path.exists(self.csv_file):
-            with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    "Zaman", "Tip", "Strain", "Piezo", "Nem",
-                    "Korozyon", "Ax", "Ay", "Az",
-                    "HasarSkoru", "Sinif", "KorozyonHizi", "KorozyonUyari"
-                ])
+        """CSV dosyasını başlıklarla oluştur. Eski şemalı (tekli 'Nem'
+        sütunlu) bir dosya varsa yedekleyip yenisini oluşturur."""
+        if os.path.exists(self.csv_file):
+            with open(self.csv_file, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+            if first_line == ','.join(self.CSV_HEADER):
+                return
+            backup = f"{self.csv_file}.legacy_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            os.rename(self.csv_file, backup)
+
+        with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(self.CSV_HEADER)
 
     def _write_csv(self, data, dtype):
         """Tek satır CSV kaydı yaz."""
@@ -135,7 +145,7 @@ class AuraCoreEngine:
             if dtype == "fast":
                 writer.writerow([
                     ts, "Hizli", "-", data.get("piezo", ""),
-                    "-", "-",
+                    "-", "-", "-",
                     data.get("ax", ""), data.get("ay", ""), data.get("az", ""),
                     f"{self.damage_score:.4f}", self.damage_class,
                     f"{self.corrosion_rate:.6f}", self.corrosion_alert
@@ -143,7 +153,8 @@ class AuraCoreEngine:
             else:
                 writer.writerow([
                     ts, "Yavas", data.get("strain", ""),
-                    "-", data.get("nem", ""), data.get("korozyon", ""),
+                    "-", data.get("nem1", ""), data.get("nem2", ""),
+                    data.get("korozyon", ""),
                     "-", "-", "-",
                     f"{self.damage_score:.4f}", self.damage_class,
                     f"{self.corrosion_rate:.6f}", self.corrosion_alert
@@ -357,11 +368,14 @@ class AuraCoreEngine:
     def process_slow(self, data):
         """Yavaş hat verisini işle."""
         strain = int(data.get('strain', 0))
-        nem = int(data.get('nem', 0))
+        nem1 = int(data.get('nem1', 0))
+        nem2 = int(data.get('nem2', 0))
         korozyon = int(data.get('korozyon', 0))
 
         self.latest['strain'] = strain
-        self.latest['nem'] = nem
+        self.latest['nem1'] = nem1
+        self.latest['nem2'] = nem2
+        self.latest['nem'] = (nem1 + nem2) / 2.0
         self.latest['korozyon'] = korozyon
         self.latest['timestamp'] = datetime.now().strftime(
             "%Y-%m-%d %H:%M:%S.%f"
@@ -473,7 +487,8 @@ class AuraCoreEngine:
                     data = {
                         'type': 'slow',
                         'strain': int(row.get('Strain', 0) or 0),
-                        'nem': int(row.get('Nem', 0) or 0),
+                        'nem1': int(row.get('Nem1', 0) or 0),
+                        'nem2': int(row.get('Nem2', 0) or 0),
                         'korozyon': int(row.get('Korozyon', 0) or 0),
                     }
                     self.process_slow(data)
@@ -498,9 +513,10 @@ class AuraCoreEngine:
             if fast_count % 20 == 0:
                 data_slow = {
                     'type': 'slow',
-                    'strain': int(np.random.normal(5000, 3000)),
-                    'nem': int(np.random.normal(17665, 5)),
-                    'korozyon': int(np.random.normal(17678, 3)),
+                    'strain': int(np.random.normal(90000, 3000)),
+                    'nem1': int(np.random.normal(14000, 200)),
+                    'nem2': int(np.random.normal(14000, 200)),
+                    'korozyon': int(np.random.normal(17100, 50)),
                 }
                 self.process_slow(data_slow)
 

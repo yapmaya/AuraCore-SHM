@@ -104,14 +104,16 @@ void loop() {
             strainValue = scale.get_units(5);
         }
 
-        int16_t nemValue      = ads.readADC_SingleEnded(0);
-        int16_t korozyonValue = ads.readADC_SingleEnded(1);
+        int16_t nem1Value     = ads.readADC_SingleEnded(0);
+        int16_t nem2Value     = ads.readADC_SingleEnded(1);
+        int16_t korozyonValue = ads.readADC_SingleEnded(2);
 
         StaticJsonDocument<256> doc;
         doc["type"]     = "slow";
         doc["ts"]       = millis();
         doc["strain"]   = strainValue;
-        doc["nem"]      = nemValue;
+        doc["nem1"]     = nem1Value;
+        doc["nem2"]     = nem2Value;
         doc["korozyon"] = korozyonValue;
         serializeJson(doc, Serial);
         Serial.println();
