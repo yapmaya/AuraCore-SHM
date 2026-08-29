@@ -358,7 +358,10 @@ class AuraCoreEngine:
             self.latest['accel_rms'],
             R['accel']['min'], R['accel']['max']
         )
-        c = self.normalize(
+        # Korozyon devresi sağlam/kopmamış iletkende YÜKSEK ADC okur;
+        # kopma/korozyon direnci artırıp okumayı düşürür — bu yüzden
+        # normalize sonucu TERS çevrilir (yüksek okuma = düşük hasar).
+        c = 1.0 - self.normalize(
             self.latest['korozyon'],
             R['korozyon']['min'], R['korozyon']['max']
         )
